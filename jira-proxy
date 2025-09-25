@@ -1,0 +1,60 @@
+// /api/jira-search.js
+export default async function handler(req, res) {
+  try {
+    // Bảo vệ đơn giản bằng secret (tùy chọn, khuyến nghị)
+    const requiredSecret = process.env.PROXY_SECRET || "";
+    if (requiredSecret && req.query.secret !== requiredSecret) {
+      return res.status(403).json({ error: "Forbidden: bad secret" });
+    }
+
+    const site = process.env.JIRA_SITE;       // ví dụ: startitnow.atlassian.net
+    const email = process.env.JIRA_EMAIL;     // email Jira
+    const token = process.env.JIRA_API_TOKEN; // API token Jira
+
+    if (!site || !email || !token) {
+      return res.status(500).json({ error: "Missing env: JIRA_SITE/JIRA_EMAIL/JIRA_API_TOKEN" });
+    }
+
+    const {
+      jql,
+      fields = "key,summary",  // có thể truyền "key,summary,status"
+      maxResults = "100",
+      startAt = "0"
+    } = req.query;
+
+    if (!jql) {
+      return res.status(400).json({ error: "Missing query param: jql" });
+    }
+
+    const auth = Buffer.from(`${email}:${token}`).toString("base64");
+    const fieldsArray = typeof fields === "string" ? fields.split(",").map(s => s.trim()).filter(Boolean) : [];
+
+    const body = {
+      jql: jql,                         // truyền đúng JQL nhận từ query string
+      fields: fieldsArray,              // mảng fields
+      maxResults: Number(maxResults),
+      startAt: Number(startAt)
+    };
+
+    const r = await fetch(`https://${site}/rest/api/3/search/jql`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Basic ${auth}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    // Lấy JSON (hoặc raw text nếu không parse được)
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+    // Forward status + data từ Jira về
+    res.status(r.status).json(data);
+
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
